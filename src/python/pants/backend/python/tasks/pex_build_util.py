@@ -8,12 +8,12 @@ from __future__ import (absolute_import, division, generators, nested_scopes, pr
 import os
 
 from pex.fetcher import Fetcher
-from pex.platforms import Platform
 from pex.resolver import resolve
 from twitter.common.collections import OrderedSet
 
 from pants.backend.python.subsystems.python_setup import PythonSetup
 from pants.backend.python.targets.python_binary import PythonBinary
+from pants.backend.python.targets.python_distribution import PythonDistribution
 from pants.backend.python.targets.python_library import PythonLibrary
 from pants.backend.python.targets.python_requirement_library import PythonRequirementLibrary
 from pants.backend.python.targets.python_tests import PythonTests
@@ -28,6 +28,10 @@ def has_python_sources(tgt):
   # PythonAntlrLibrary extend PythonTarget, and until we fix that (which we can't do until
   # we remove the old python pipeline entirely) we want to ignore those target types here.
   return isinstance(tgt, (PythonLibrary, PythonTests, PythonBinary)) and tgt.has_sources()
+
+
+def is_local_python_dist(tgt):
+  return isinstance(tgt, PythonDistribution)
 
 
 def has_resources(tgt):
@@ -73,11 +77,8 @@ def dump_sources(builder, tgt, log):
                     'Depend on resources() targets instead.'.format(tgt.address.spec))
 
 
-def dump_requirements(builder, interpreter, req_libs, log, platforms=None):
+def dump_requirement_libs(builder, interpreter, req_libs, log, platforms=None):
   """Multi-platform dependency resolution for PEX files.
-
-  Returns a list of distributions that must be included in order to satisfy a set of requirements.
-  That may involve distributions for multiple platforms.
 
   :param builder: Dump the requirements into this builder.
   :param interpreter: The :class:`PythonInterpreter` to resolve requirements for.
@@ -86,30 +87,30 @@ def dump_requirements(builder, interpreter, req_libs, log, platforms=None):
   :param platforms: A list of :class:`Platform`s to resolve requirements for.
                     Defaults to the platforms specified by PythonSetup.
   """
+  reqs = [req for req_lib in req_libs for req in req_lib.requirements]
+  dump_requirements(builder, interpreter, reqs, log, platforms)
 
-  # Gather and de-dup all requirements.
-  reqs = OrderedSet()
-  for req_lib in req_libs:
-    for req in req_lib.requirements:
-      reqs.add(req)
 
-  # See which ones we need to build.
-  reqs_to_build = OrderedSet()
+def dump_requirements(builder, interpreter, reqs, log, platforms=None):
+  """Multi-platform dependency resolution for PEX files.
+
+  :param builder: Dump the requirements into this builder.
+  :param interpreter: The :class:`PythonInterpreter` to resolve requirements for.
+  :param reqs: A list of :class:`PythonRequirement` to resolve.
+  :param log: Use this logger.
+  :param platforms: A list of :class:`Platform`s to resolve requirements for.
+                    Defaults to the platforms specified by PythonSetup.
+  """
+  deduped_reqs = OrderedSet(reqs)
   find_links = OrderedSet()
-  for req in reqs:
-    # TODO: should_build appears to be hardwired to always be True. Get rid of it?
-    if req.should_build(interpreter.python, Platform.current()):
-      reqs_to_build.add(req)
-      log.debug('  Dumping requirement: {}'.format(req))
-      builder.add_requirement(req.requirement)
-      if req.repository:
-        find_links.add(req.repository)
-    else:
-      log.debug('  Skipping {} based on version filter'.format(req))
+  for req in deduped_reqs:
+    log.debug('  Dumping requirement: {}'.format(req))
+    builder.add_requirement(req.requirement)
+    if req.repository:
+      find_links.add(req.repository)
 
   # Resolve the requirements into distributions.
-  distributions = _resolve_multi(interpreter, reqs_to_build, platforms, find_links)
-
+  distributions = _resolve_multi(interpreter, deduped_reqs, platforms, find_links)
   locations = set()
   for platform, dists in distributions.items():
     for dist in dists:

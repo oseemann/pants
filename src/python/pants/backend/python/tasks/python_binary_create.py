@@ -12,7 +12,8 @@ from pex.pex_builder import PEXBuilder
 from pex.pex_info import PexInfo
 
 from pants.backend.python.targets.python_binary import PythonBinary
-from pants.backend.python.tasks.pex_build_util import (dump_requirements, dump_sources,
+from pants.backend.python.targets.python_requirement_library import PythonRequirementLibrary
+from pants.backend.python.tasks.pex_build_util import (dump_requirement_libs, dump_sources,
                                                        has_python_requirements, has_python_sources,
                                                        has_resources)
 from pants.base.build_environment import get_buildroot
@@ -43,6 +44,7 @@ class PythonBinaryCreate(Task):
   def prepare(cls, options, round_manager):
     round_manager.require_data(PythonInterpreter)
     round_manager.require_data('python')  # For codegen.
+    round_manager.optional_product(PythonRequirementLibrary)  # For local dists.
 
   @staticmethod
   def is_binary(target):
@@ -126,7 +128,7 @@ class PythonBinaryCreate(Task):
       # Dump everything into the builder's chroot.
       for tgt in source_tgts:
         dump_sources(builder, tgt, self.context.log)
-      dump_requirements(builder, interpreter, req_tgts, self.context.log, binary_tgt.platforms)
+      dump_requirement_libs(builder, interpreter, req_tgts, self.context.log, binary_tgt.platforms)
 
       # Build the .pex file.
       pex_path = os.path.join(results_dir, '{}.pex'.format(binary_tgt.name))
